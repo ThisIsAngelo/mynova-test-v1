@@ -1,0 +1,217 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  clerkId       String    @unique
+  email         String    @unique
+  name          String?
+  imageUrl      String?
+  level         Int       @default(1)
+  experience    Int       @default(0)
+  coins         Int       @default(0) // Nova Coins
+  streakCount   Int       @default(0) // Hari ke-berapa (1-30)
+  lastClaimedAt DateTime?
+  activeAvatar  String   @default("/assets/images/avatars/default.jpg") 
+  activeFrame   String   @default("none")
+
+  inventory     UserInventory[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  todos       Todo[]
+  ideas       Idea[]
+  goals       Goal[]
+  tips        Tip[]
+  wishlists   Wishlist[]
+  notes       Note[]
+  coinHistory CoinTransaction[]
+  achievements  UserAchievement[]
+
+  @@index([clerkId])
+}
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String
+  achievementId String   // ID string dari master data (misal: "FIRST_TODO")
+  unlockedAt    DateTime @default(now())
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 🔒 GARANSI ANTI-DUPLIKAT: 
+  // Kombinasi User + AchievementID harus unik.
+  @@unique([userId, achievementId])
+  @@index([userId])
+}
+
+model ShopItem {
+  id          String   @id @default(cuid())
+  type        String   // "AVATAR" | "FRAME" 
+  name        String
+  description String?
+  price       Int      // Harga dalam Gold
+  asset       String   // File path (avatar) atau CSS key (frame) 
+  isDefault   Boolean  @default(false) // Item bawaan user baru
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  inventory   UserInventory[]
+}
+
+// [NEW] Tabel Kepemilikan Item User 
+model UserInventory {
+  id          String   @id @default(cuid())
+  userId      String
+  shopItemId  String
+  unlockedAt  DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item        ShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
+
+  // Constraint: User tidak bisa beli item yang sama 2x
+  @@unique([userId, shopItemId])
+  @@index([userId])
+}
+
+enum TodoType {
+  NORMAL
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+model Todo {
+  id             String   @id @default(cuid())
+  title          String
+  description    String?  @db.Text
+  isCompleted    Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  order          Int      @default(0)
+  hasRewardedExp Boolean  @default(false)
+
+  type            TodoType  @default(NORMAL)
+  sourceId        String?   // Jika ini adalah "anak" hasil generate, bapaknya siapa?
+  lastGeneratedAt DateTime? // Ini Untuk Template: Kapan terakhir kali dia melahirkan anak?
+  
+  template        Todo?     @relation("TodoTemplates", fields: [sourceId], references: [id])
+  instances       Todo[]    @relation("TodoTemplates")
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Idea {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum GoalType {
+  SHORT
+  LONG
+}
+
+model Goal {
+  id             String   @id @default(cuid())
+  title          String
+  color          String   @default("#22c55e")
+  progress       Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  // Status Penyelesaian
+  status         String   @default("ACTIVE") // ACTIVE, COMPLETED
+  completedAt    DateTime?
+  hasRewardedExp Boolean  @default(false)
+
+  // --- UPGRADE BARU (VISION HIERARCHY) ---
+  type           GoalType @default(SHORT) // Default ke SHORT biar compatible sama data lama
+  isActive       Boolean  @default(true)  // Utk fitur Archive nanti
+  
+  // Relasi Parent-Child (Long-term punya banyak Short-term)
+  parentGoalId   String?
+  parentGoal     Goal?    @relation("GoalHierarchy", fields: [parentGoalId], references: [id])
+  subGoals       Goal[]   @relation("GoalHierarchy")
+
+  // Relasi ke User & Milestone (Existing)
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  milestones Milestone[]
+}
+
+// Model Milestone (Tidak perlu diubah, tapi pastikan ada)
+model Milestone {
+  id          String   @id @default(cuid())
+  title       String
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  goalId      String
+  goal        Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+}
+
+model Tip {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  source    String? // e.g. "Instagram @user", "Budi", "Podcast"
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Wishlist {
+  id          String   @id @default(cuid())
+  title       String
+  url         String   @db.Text // Link Youtube / Image Address
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Note {
+  id      String  @id @default(cuid())
+  title   String
+  content String? @db.Text
+  
+  // Format JSON: [{ level: 1, text: "Pendahuluan", id: "heading-1" }, ...]
+  headings Json?  
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model CoinTransaction {
+  id          String   @id @default(cuid())
+  amount      Int // Positif (+) untuk dapet, Negatif (-) untuk beli
+  description String // Contoh: "Level Up Reward", "Bought Theme", "Task Completed"
+  createdAt   DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
