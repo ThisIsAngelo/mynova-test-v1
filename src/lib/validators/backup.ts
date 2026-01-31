@@ -1,24 +1,19 @@
 import { z } from "zod";
 
-// Helper untuk validasi tanggal dari string JSON
+// Helper untuk validasi tanggal
 const dateSchema = z.string().pipe(z.coerce.date());
 
-// [FIXED] Gunakan transform manual agar tipe data aman
+// Helper untuk nullable date (Fix error sebelumnya)
 const nullableDateSchema = z.string()
   .nullable()
   .optional()
-  .transform((val) => {
-    // Jika value ada (string), ubah jadi Date. 
-    // Jika null atau undefined, return null (sesuai standar Prisma).
-    return val ? new Date(val) : null;
-  });
+  .transform((val) => (val ? new Date(val) : null));
 
-// Schema untuk setiap Model (Simplified version of Prisma models)
 export const backupSchema = z.object({
   meta: z.object({
     version: z.number(),
     exportedAt: z.string(),
-    userId: z.string(), // Cek biar gak restore punya orang lain
+    userId: z.string(),
   }),
   data: z.object({
     user: z.object({
@@ -38,7 +33,7 @@ export const backupSchema = z.object({
       unlockedAt: dateSchema,
     })),
     todos: z.array(z.object({
-      id: z.string(), // Kita keep ID biar konsisten
+      id: z.string(),
       title: z.string(),
       description: z.string().nullable().optional(),
       isCompleted: z.boolean(),
@@ -69,7 +64,25 @@ export const backupSchema = z.object({
       createdAt: dateSchema,
       updatedAt: dateSchema,
     })),
-    // ... Tambahkan model lain (Ideas, Tips, Wishlists, CoinHistory) sesuai kebutuhan
+    ideas: z.array(z.object({
+      id: z.string(),
+      content: z.string(),
+      createdAt: dateSchema,
+    })),
+    tips: z.array(z.object({
+      id: z.string(),
+      content: z.string(),
+      source: z.string().nullable().optional(),
+      createdAt: dateSchema,
+    })),
+    wishlists: z.array(z.object({
+      id: z.string(),
+      title: z.string(),
+      url: z.string(),
+      description: z.string().nullable().optional(),
+      createdAt: dateSchema,
+    })),
+
     coinHistory: z.array(z.object({
       amount: z.number(),
       description: z.string(),

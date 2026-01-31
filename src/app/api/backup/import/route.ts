@@ -16,6 +16,7 @@ export async function POST(req: Request) {
     const result = backupSchema.safeParse(body);
 
     if (!result.success) {
+      console.error("Validation Error:", result.error); // Debugging
       return new NextResponse("Invalid backup file format", { status: 400 });
     }
 
@@ -23,13 +24,15 @@ export async function POST(req: Request) {
 
     // 2. SAFETY TRANSACTION (Wipe & Replace)
     await prisma.$transaction(async (tx) => {
-      // A. HAPUS SEMUA DATA LAMA (Urutan penting karena Foreign Keys)
+      // A. HAPUS SEMUA DATA LAMA (Wipe Clean)
       // Hapus milestones dulu karena nempel di goal
       await tx.milestone.deleteMany({ where: { goal: { userId: user.id } } }); 
       await tx.goal.deleteMany({ where: { userId: user.id } });
       
       await tx.todo.deleteMany({ where: { userId: user.id } });
       await tx.note.deleteMany({ where: { userId: user.id } });
+      
+      // [Hapus data lama untuk model baru]
       await tx.idea.deleteMany({ where: { userId: user.id } });
       await tx.tip.deleteMany({ where: { userId: user.id } });
       await tx.wishlist.deleteMany({ where: { userId: user.id } });
@@ -39,7 +42,7 @@ export async function POST(req: Request) {
       await tx.userAchievement.deleteMany({ where: { userId: user.id } });
       await tx.userInventory.deleteMany({ where: { userId: user.id } });
 
-      // B. UPDATE STATS USER
+      // B. UPDATE STATS USER (Restore Level & XP)
       await tx.user.update({
         where: { id: user.id },
         data: {
@@ -53,28 +56,65 @@ export async function POST(req: Request) {
       });
 
       // C. RESTORE DATA BARU
-      // Gunakan createMany untuk performa, kita force ID dari backup
       
+      // 1. Todos
       if (data.todos.length > 0) {
         await tx.todo.createMany({
-          data: data.todos.map((t) => ({
-            ...t,
-            userId: user.id, // Pastikan userId mengarah ke user sekarang
-          })),
+          data: data.todos.map((t) => ({ ...t, userId: user.id })),
         });
       }
 
+      // 2. Notes
       if (data.notes.length > 0) {
         await tx.note.createMany({
           data: data.notes.map((n) => ({ ...n, userId: user.id })),
         });
       }
 
-      // Restore Relasional Sederhana
+      // 3. [NEW] Ideas
+      if (data.ideas && data.ideas.length > 0) {
+        await tx.idea.createMany({
+          data: data.ideas.map((i) => ({ 
+            id: i.id,
+            content: i.content,
+            createdAt: i.createdAt,
+            userId: user.id 
+          })),
+        });
+      }
+
+      // 4. [NEW] Tips
+      if (data.tips && data.tips.length > 0) {
+        await tx.tip.createMany({
+          data: data.tips.map((t) => ({
+            id: t.id,
+            content: t.content,
+            source: t.source,
+            createdAt: t.createdAt,
+            userId: user.id
+          })),
+        });
+      }
+
+      // 5. [NEW] Wishlists
+      if (data.wishlists && data.wishlists.length > 0) {
+        await tx.wishlist.createMany({
+          data: data.wishlists.map((w) => ({
+            id: w.id,
+            title: w.title,
+            url: w.url,
+            description: w.description,
+            createdAt: w.createdAt,
+            userId: user.id
+          })),
+        });
+      }
+
+      // 6. Inventory & Achievements
       if (data.inventory.length > 0) {
         await tx.userInventory.createMany({
           data: data.inventory.map((i) => ({ ...i, userId: user.id })),
-          skipDuplicates: true, // Jaga-jaga
+          skipDuplicates: true, 
         });
       }
 
@@ -91,17 +131,12 @@ export async function POST(req: Request) {
         })
       }
 
-      // D. RESTORE GOALS (KOMPLEKS KARENA HIERARKI & MILESTONES)
-      // Karena goal punya parentGoalId dan Milestone, kita loop satu-satu lebih aman
-      // atau pisahkan parentGoalId.
-      
-      // Strategi: Insert Goals tanpa parentId dulu, baru Milestone, baru update parentId?
-      // Atau karena createMany di Postgres membolehkan defer constraint? 
-      // Untuk amannya di Prisma: Kita insert dulu Goal TANPA parentId
+      // 7. Goals (Complex Restore)
+      // Insert Goals TANPA parentId dulu (biar gak error foreign key)
       for (const goal of data.goals) {
           await tx.goal.create({
               data: {
-                  id: goal.id, // Force ID
+                  id: goal.id, 
                   userId: user.id,
                   title: goal.title,
                   color: goal.color,
@@ -110,7 +145,7 @@ export async function POST(req: Request) {
                   type: goal.type,
                   createdAt: goal.createdAt,
                   completedAt: goal.completedAt,
-                  // parentGoalId: goal.parentGoalId, <--- SKIP DULU BIAR GAK ERROR "Parent not found"
+                  // parentGoalId di-skip dulu
                   milestones: {
                       create: goal.milestones.map(m => ({
                           id: m.id,
@@ -122,10 +157,10 @@ export async function POST(req: Request) {
           })
       }
 
-      // Step kedua: Link Parent Goals
+      // Link Parent Goals (Update setelah semua goal terbuat)
       const goalsWithParents = data.goals.filter(g => g.parentGoalId);
       for (const goal of goalsWithParents) {
-          // Cek apakah parent goal-nya juga ikut di-restore?
+          // Pastikan parent ada di backup ini
           const parentExists = data.goals.find(g => g.id === goal.parentGoalId);
           if (parentExists) {
               await tx.goal.update({
